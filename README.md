@@ -3,18 +3,19 @@
 Scans for "smart money" signals across four sources, scores them, sizes a
 position, and alerts to Discord. Includes a forward-return backtest harness.
 
-> Status: **skeleton + OpenInsider (insider buys) scanner + backtest harness.**
-> The other three scanners (unusual options, politician, institutional) are
-> stubs with defined interfaces.
+> Status: **insider (OpenInsider), institutional (EDGAR 13D/13G), and
+> politician (Capitol Trades) scanners + backtest harness.** Insider is
+> live-verified; institutional and politician are coded to their APIs' documented
+> shapes and need one live-schema verification pass. Unusual options is a stub.
 
 ## Signals
 
-| Source | Data | Backtestable |
-|---|---|---|
-| Unusual call option volume | yfinance option chains (vol/OI) | No (no free historical chains) |
-| Insider buys | OpenInsider (SEC Form 4) scrape | **Yes** |
-| Politician buys | Capitol Trades scrape (STOCK Act) | Yes (planned) |
-| Institutional | SEC EDGAR 13D / 13G / 13F | Yes (planned) |
+| Source | Data | Status | Backtestable |
+|---|---|---|---|
+| Unusual call option volume | yfinance option chains (vol/OI) | stub | No (no free historical chains) |
+| Insider buys | OpenInsider (SEC Form 4) | ✅ live-verified | **Yes** |
+| Institutional | SEC EDGAR 13D / 13G | ✅ built (verify live) | Yes |
+| Politician buys | Capitol Trades (STOCK Act) | ✅ built (verify live) | Yes |
 
 Any one signal is enough to act. Position size scales with signal strength and
 the number of overlapping sources for the same ticker.

@@ -43,6 +43,42 @@ REQUEST_DELAY = float(os.getenv("REQUEST_DELAY", "1.0"))
 OPENINSIDER_BASE = os.getenv("OPENINSIDER_BASE", "http://openinsider.com")
 
 # --------------------------------------------------------------------------- #
+# Ticker renames (symbol changes of a *continuing* company)
+# --------------------------------------------------------------------------- #
+# yfinance returns nothing for retired symbols, so a signal filed under an old
+# ticker looks "delisted" even though the company trades on under a new symbol.
+# Map old -> current so the price lookup (and thus the backtest) recovers them.
+#
+# IMPORTANT: only pure renames / symbol changes belong here — NOT acquisitions.
+# When a company is bought out, the position is realized at the deal price, not
+# converted into the acquirer's stock, so mapping e.g. ATVI -> MSFT would be
+# wrong. Those cash/premium exits can't be recovered from yfinance and are left
+# missing on purpose.
+TICKER_RENAMES: dict[str, str] = {
+    "SQ": "XYZ",       # Block
+    "NLOK": "GEN",     # NortonLifeLock -> Gen Digital
+    "SGMS": "LNW",     # Scientific Games -> Light & Wonder
+    "SEAS": "PRKS",    # SeaWorld -> United Parks
+    "RCII": "UPBD",    # Rent-A-Center -> Upbound Group
+    "CFX": "ENOV",     # Colfax -> Enovis
+    "CPSI": "TBRG",    # Computer Programs & Systems -> TruBridge
+    "DISH": "SATS",    # DISH Network -> EchoStar (surviving ticker)
+    "BGNE": "ONC",     # BeiGene -> BeOne Medicines
+    "BODY": "BODI",    # Beachbody -> BODi
+    "HHC": "HHH",      # Howard Hughes -> Howard Hughes Holdings
+    "MPLN": "CTEV",    # MultiPlan -> Claritev
+    "NCR": "VYX",      # NCR -> NCR Voyix (continuing entity)
+    "LSXMA": "SIRI",   # Liberty SiriusXM -> Sirius XM
+    "LSXMK": "SIRI",
+    "PARA": "PSKY",    # Paramount -> Paramount Skydance
+    "PARAA": "PSKY",
+    "SIX": "FUN",      # Six Flags / Cedar Fair merger (surviving ticker)
+    "WLL": "CHRD",     # Whiting -> Chord Energy (Whiting+Oasis)
+    "ZI": "GTM",       # ZoomInfo -> GTM
+}
+
+
+# --------------------------------------------------------------------------- #
 # Universe / watchlist
 # --------------------------------------------------------------------------- #
 # Per project decision: report everything (no ticker filter) to start.

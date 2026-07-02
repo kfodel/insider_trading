@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+import config
 from scoring import Signal
 
 # yfinance logs "$TICKER: possibly delisted" etc. at ERROR for every dead
@@ -48,8 +49,11 @@ class PriceCache:
         if ticker in self._cache:
             return self._cache[ticker]
         series: Optional[pd.Series] = None
+        # Resolve renamed symbols to their current ticker (Yahoo keeps the full
+        # history under the current symbol).
+        lookup = config.TICKER_RENAMES.get(ticker, ticker)
         try:
-            df = yf.Ticker(ticker).history(
+            df = yf.Ticker(lookup).history(
                 start=self.start.isoformat(),
                 end=self.end.isoformat(),
                 auto_adjust=True,

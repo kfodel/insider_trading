@@ -238,6 +238,27 @@ def test_dedup_buys():
     assert len(insider_buys.dedup_buys(buys + buys)) == len(buys)
 
 
+def test_ticker_rename_applied(monkeypatch):
+    """PriceCache should look up the renamed symbol, not the retired one."""
+    import config as cfg
+
+    requested = {}
+
+    class _FakeYf:
+        def __init__(self, symbol):
+            requested["symbol"] = symbol
+
+        def history(self, **kwargs):
+            return pd.DataFrame()  # empty is fine; we only check the symbol used
+
+    monkeypatch.setattr(cfg, "TICKER_RENAMES", {"SQ": "XYZ"})
+    monkeypatch.setattr(harness.yf, "Ticker", _FakeYf)
+
+    cache = harness.PriceCache(start=date(2022, 1, 1), end=date(2023, 1, 1))
+    cache.closes("SQ")
+    assert requested["symbol"] == "XYZ"
+
+
 def test_coverage_by_group(monkeypatch):
     # LIVE has data; DEAD is "delisted" (no series). Both score 2.
     series = {"LIVE": _synthetic_series(100, 0.001), "SPY": _synthetic_series(400, 0.0002)}
@@ -265,6 +286,88 @@ def test_coverage_by_group(monkeypatch):
     assert cov["by_score"][2]["missing"] == 1
     assert cov["by_score"][3]["missing"] == 1        # GONE missing
     assert "survivorship" in harness.format_coverage(cov).lower()
+
+
+# --------------------------------------------------------------------------- #
+# Institutional (EDGAR) parser + scoring
+# --------------------------------------------------------------------------- #
+def test_edgar_parse_and_score():
+    from scanners import institutional
+
+    payload = {
+        "hits": {
+            "hits": [
+                {
+                    "_id": "0001-24-000001",
+                    "_source": {
+                        "display_names": ["Acme Corp (ACME) (CIK 0000123456)"],
+                        "ciks": ["0000123456"],
+                        "file_date": "2024-05-01",
+                        "root_form": "SC 13D",
+                    },
+                },
+                {
+                    "_id": "0002-24-000002",
+                    "_source": {
+                        "display_names": ["Beta Inc (BETA) (CIK 0000999999)"],
+                        "ciks": ["0000999999"],
+                        "file_date": "2024-05-02",
+                        "root_form": "SC 13G",
+                    },
+                },
+            ]
+        }
+    }
+    filings = institutional._parse_hits(payload)
+    assert [f.ticker for f in filings] == ["ACME", "BETA"]
+    assert filings[0].filed == date(2024, 5, 1)
+
+    signals = {s.ticker: s for s in institutional.filings_to_signals(filings)}
+    assert signals["ACME"].score == 3 and signals["ACME"].detail["form_type"] == "13D"
+    assert signals["BETA"].score == 1 and signals["BETA"].detail["form_type"] == "13G"
+
+
+# --------------------------------------------------------------------------- #
+# Politician (Capitol Trades) parser + scoring
+# --------------------------------------------------------------------------- #
+def test_capitoltrades_parse_and_score():
+    from scanners import politician_buys as pb
+
+    payload = {
+        "data": [
+            {
+                "asset": {"assetTicker": "NVDA:US"},
+                "politician": {"firstName": "Jane", "lastName": "Doe", "party": "R", "chamber": "house"},
+                "txType": "buy",
+                "value": 300000,
+                "txDate": "2024-03-01",
+                "pubDate": "2024-03-15",
+            },
+            {
+                "asset": {"assetTicker": "AAPL"},
+                "politician": {"firstName": "John", "lastName": "Roe", "party": "D", "chamber": "senate"},
+                "txType": "buy",
+                "value": 60000,
+                "txDate": "2024-03-02",
+                "pubDate": "2024-03-16",
+            },
+            {  # a sale — must be ignored
+                "asset": {"assetTicker": "TSLA"},
+                "politician": {"firstName": "X", "lastName": "Y"},
+                "txType": "sell",
+                "value": 500000,
+                "txDate": "2024-03-03",
+                "pubDate": "2024-03-17",
+            },
+        ]
+    }
+    trades = pb._parse_trades(payload)
+    assert trades[0].ticker == "NVDA"          # ":US" suffix stripped
+    signals = {s.ticker: s for s in pb.trades_to_signals(trades)}
+    assert signals["NVDA"].score == 2          # >= $250k
+    assert signals["AAPL"].score == 1          # >= $50k
+    assert "TSLA" not in signals               # sale dropped
+    assert signals["NVDA"].signal_date == date(2024, 3, 15)  # pub_date
 
 
 if __name__ == "__main__":

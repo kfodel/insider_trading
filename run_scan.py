@@ -14,13 +14,20 @@ import argparse
 
 import config
 import discord_alert
-from scanners import insider_buys
+from scanners import institutional, insider_buys, politician_buys
 from scoring import Signal, aggregate_positions
 
-# Active scanners. Each is (name, callable -> list[Signal]). Stubs are added
-# here as they're implemented.
+# Active scanners. Each is (name, callable -> list[Signal]). Institutional and
+# politician disclosures move slower than insider filings, so they use a wider
+# lookback window.
+def _wide(args) -> int:
+    return max(args.lookback, 30)
+
+
 SCANNERS = [
-    ("insider", lambda args: insider_buys.scan(lookback_days=args.lookback, verbose=not args.quiet)),
+    ("insider", lambda a: insider_buys.scan(lookback_days=a.lookback, verbose=not a.quiet)),
+    ("institutional", lambda a: institutional.scan(lookback_days=_wide(a), verbose=not a.quiet)),
+    ("politician", lambda a: politician_buys.scan(lookback_days=_wide(a), verbose=not a.quiet)),
 ]
 
 
@@ -47,6 +54,15 @@ def main() -> int:
 
     signals = collect_signals(args)
     positions = aggregate_positions(signals)
+
+    # The overlap thesis: tickers flagged by 2+ independent sources are the
+    # highest-conviction ideas. Surface them explicitly.
+    overlaps = [p for p in positions if len(p.sources) >= 2]
+    if overlaps:
+        print("\n*** MULTI-SOURCE OVERLAP (highest conviction) ***")
+        for p in overlaps:
+            srcs = "+".join(sorted(p.sources))
+            print(f"  {p.ticker}: {srcs}  score={p.total_score}  size={p.size_pct}%")
 
     message = discord_alert.format_positions(positions)
     print("\n" + message)
