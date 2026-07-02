@@ -50,6 +50,14 @@ def test_parse_fixture():
     assert ceo.is_c_suite is True
 
 
+def test_clean_ticker():
+    assert insider_buys._clean_ticker("CFTR.") == "CFTR"       # trailing dot artifact
+    assert insider_buys._clean_ticker("BRK.B") == "BRK-B"      # class share -> dash
+    assert insider_buys._clean_ticker(" aapl ") == "AAPL"      # trim + upper
+    assert insider_buys._clean_ticker("RDS/A") == "RDS-A"      # slash separator
+    assert insider_buys._clean_ticker("") == ""
+
+
 def test_money_and_date_parsers():
     assert insider_buys._parse_money("+$1,234,567") == 1234567.0
     assert insider_buys._parse_money("$3.00") == 3.0

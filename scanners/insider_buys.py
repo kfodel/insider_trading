@@ -87,6 +87,22 @@ def _parse_int(text: str) -> Optional[int]:
     return int(val) if val is not None else None
 
 
+_TICKER_STRIP_RE = __import__("re").compile(r"[^A-Z0-9\-]")
+
+
+def _clean_ticker(raw: str) -> str:
+    """Normalize an OpenInsider ticker into a yfinance-compatible symbol.
+
+    - upper-cases and trims
+    - maps class-share separators to yfinance's dash form (BRK.B -> BRK-B)
+    - strips stray punctuation/footnote artifacts (e.g. "CFTR." -> "CFTR")
+    """
+    t = (raw or "").strip().upper()
+    t = t.replace(".", "-").replace("/", "-")
+    t = _TICKER_STRIP_RE.sub("", t)
+    return t.strip("-")
+
+
 def _parse_date(text: str) -> Optional[date]:
     """OpenInsider uses 'YYYY-MM-DD' (sometimes with a time suffix)."""
     if not text:
@@ -145,7 +161,7 @@ def _parse_screener_table(html: str) -> list[InsiderBuy]:
             idx = colmap.get(key)
             return cells[idx] if idx is not None and idx < len(cells) else ""
 
-        ticker = cell("ticker").upper()
+        ticker = _clean_ticker(cell("ticker"))
         if not ticker:
             continue
 

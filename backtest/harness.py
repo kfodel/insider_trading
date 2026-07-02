@@ -12,7 +12,8 @@ chains).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Optional
 
@@ -21,6 +22,11 @@ import pandas as pd
 import yfinance as yf
 
 from scoring import Signal
+
+# yfinance logs "$TICKER: possibly delisted" etc. at ERROR for every dead
+# symbol. Over 5 years of history that's hundreds of lines of noise for an
+# expected condition — silence it and report coverage ourselves instead.
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 # Forward windows in approximate calendar days.
 HORIZONS = {"1mo": 30, "3mo": 91, "6mo": 182, "12mo": 365}
@@ -35,10 +41,8 @@ class PriceCache:
 
     start: date
     end: date
-    _cache: dict[str, Optional[pd.Series]] = None  # type: ignore[assignment]
-
-    def __post_init__(self):
-        self._cache = {}
+    _cache: dict[str, Optional[pd.Series]] = field(default_factory=dict)
+    missing: set[str] = field(default_factory=set)
 
     def closes(self, ticker: str) -> Optional[pd.Series]:
         if ticker in self._cache:
@@ -56,6 +60,8 @@ class PriceCache:
                 series = s
         except Exception:  # noqa: BLE001 — bad ticker / network; treat as missing
             series = None
+        if series is None:
+            self.missing.add(ticker)
         self._cache[ticker] = series
         return series
 
@@ -132,6 +138,22 @@ def forward_returns(
                 else np.nan
             )
         rows.append(row)
+
+    # Coverage report: dead/renamed tickers are expected over long spans and are
+    # simply dropped. Surface the count so the user knows the effective sample.
+    requested = {s.ticker for s in signals} | {BENCHMARK}
+    n_missing = len(cache.missing)
+    n_found = len(requested) - n_missing
+    print(
+        f"[prices] {n_found}/{len(requested)} tickers had data; "
+        f"{n_missing} missing (delisted/renamed/no data)."
+    )
+    if cache.missing:
+        sample = ", ".join(sorted(cache.missing)[:20])
+        more = " ..." if n_missing > 20 else ""
+        print(f"[prices] no data for: {sample}{more}")
+    if BENCHMARK in cache.missing:
+        print(f"[prices] WARNING: benchmark {BENCHMARK} had no data — excess vs SPY unavailable.")
 
     return pd.DataFrame(rows)
 
