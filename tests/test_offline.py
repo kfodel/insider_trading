@@ -224,6 +224,15 @@ def test_fetch_buys_value_floor():
     assert tickers == ["ACME", "BIGV"]
 
 
+def test_screener_url_fdr_format():
+    url = insider_buys._screener_url(filing_range=(date(2025, 7, 1), date(2025, 7, 31)))
+    # Confirmed against OpenInsider's UI: fd=-1 (Custom) activates the range,
+    # and the range uses spaces around the dash (encoded as +-+).
+    assert "fd=-1" in url
+    assert "fdr=07%2F01%2F2025+-+07%2F31%2F2025" in url
+    assert "xp=1" in url
+
+
 def test_dedup_buys():
     buys = insider_buys._parse_screener_table(FIXTURE.read_text())
     assert len(insider_buys.dedup_buys(buys + buys)) == len(buys)

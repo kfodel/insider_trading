@@ -36,6 +36,7 @@ def _monthly_windows(start: date, end: date):
 
 def gather_historical_signals(start: date, end: date, min_value_usd: float, verbose: bool):
     all_buys = []
+    window_counts = []
     for w_start, w_end in _monthly_windows(start, end):
         if verbose:
             print(f"[window] {w_start} .. {w_end}")
@@ -45,8 +46,20 @@ def gather_historical_signals(start: date, end: date, min_value_usd: float, verb
             verbose=verbose,
         )
         all_buys.extend(buys)
+        window_counts.append(len(buys))
         if verbose:
             print(f"  -> {len(buys)} buys (>= ${min_value_usd:,.0f})")
+
+    # Guard: if every window returns the same non-zero count, the date-range
+    # filter is almost certainly being ignored (same all-time set each window).
+    nonzero = [c for c in window_counts if c > 0]
+    if len(nonzero) >= 3 and len(set(nonzero)) == 1:
+        print(
+            f"\nWARNING: every window returned {nonzero[0]} buys — the OpenInsider "
+            "date-range filter (fdr) appears to be ignored. Results are unreliable; "
+            "check the fdr URL format before trusting this backtest.\n"
+        )
+
     all_buys = dedup_buys(all_buys)  # windows can overlap on filing/trade dates
     if verbose:
         print(f"Total buys after dedup: {len(all_buys)}")

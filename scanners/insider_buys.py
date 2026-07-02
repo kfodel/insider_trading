@@ -103,15 +103,23 @@ def _clean_ticker(raw: str) -> str:
     return t.strip("-")
 
 
+_DATE_FORMATS = ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%Y/%m/%d")
+
+
 def _parse_date(text: str) -> Optional[date]:
-    """OpenInsider uses 'YYYY-MM-DD' (sometimes with a time suffix)."""
+    """Parse an OpenInsider date cell, tolerant of format and a time suffix.
+
+    Handles 'YYYY-MM-DD', 'YYYY-MM-DD HH:MM:SS', and 'MM/DD/YYYY' variants.
+    """
     if not text:
         return None
-    token = text.strip().split(" ")[0]
-    try:
-        return datetime.strptime(token, "%Y-%m-%d").date()
-    except ValueError:
-        return None
+    token = text.strip().replace("\xa0", " ").split(" ")[0]
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(token, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 # Canonical header substrings -> our field key.
@@ -133,7 +141,8 @@ def _build_header_map(header_cells: list[str]) -> dict[str, int]:
     """Map our field keys to column indices using header text."""
     mapping: dict[str, int] = {}
     for idx, raw in enumerate(header_cells):
-        label = raw.strip().lower()
+        # Normalize nbsp and collapse whitespace so "Filing\xa0Date" etc. match.
+        label = " ".join(raw.replace("\xa0", " ").lower().split())
         for alias, key in _COLUMN_ALIASES.items():
             if alias in label and key not in mapping:
                 mapping[key] = idx
@@ -200,25 +209,29 @@ def _screener_url(
     `min_value_usd` filters by transaction value; `min_insiders` >= 3 finds
     cluster buys.
     """
+    # Param order/shape mirrors OpenInsider's own screener UI (confirmed against
+    # a working custom-range URL). Blank params mean "no filter".
     params: dict[str, str | int] = {
         "s": "",            # ticker (blank = all)
         "o": "",            # insider name
         "pl": "", "ph": "",  # price low/high
         "ll": "", "lh": "",
-        "fd": "",           # filing-date preset in days (blank when using fdr)
+        "fd": "0",          # filing-date preset in days (0=all; -1=custom range)
         "fdr": "",          # filing-date custom range "MM/DD/YYYY - MM/DD/YYYY"
         "td": "0",
         "tdr": "",
         "fdlyl": "", "fdlyh": "",
         "daysago": "",
-        "xp": "1",          # transaction type: P - Purchase
+        "xp": "1",          # transaction type: P - Purchase (only)
         "vl": "", "vh": "",  # value low/high (in $thousands)
         "ocl": "", "och": "",
-        "sic1": "-1", "sicl": "", "sich": "",
+        "sic1": "-1", "sicl": "100", "sich": "9999",  # SIC industry range (all)
         "grp": "0",
-        "nfl": "", "nfh": "",  # number of insiders (filers) low/high
-        "nsl": "", "nsh": "",
-        "nadl": "", "nadh": "",
+        "nfl": "", "nfh": "",   # number of insiders (filers) low/high
+        "nil": "", "nih": "",   # number of insider trades low/high
+        "nol": "", "noh": "",   # number of officers low/high
+        "v2l": "", "v2h": "",   # secondary value filter
+        "oc2l": "", "oc2h": "",
         "sortcol": "0",     # sort by filing date desc
         "cnt": rows,
         "page": page,
@@ -226,6 +239,11 @@ def _screener_url(
 
     if filing_range is not None:
         start, end = filing_range
+        # The filing-date dropdown (fd) must be set to "Custom" (-1) for the
+        # custom range (fdr) to take effect; otherwise the dropdown preset wins
+        # and OpenInsider returns its default window (last 2 years), ignoring
+        # fdr. Format matches OpenInsider's UI: "MM/DD/YYYY - MM/DD/YYYY".
+        params["fd"] = "-1"
         params["fdr"] = f"{start:%m/%d/%Y} - {end:%m/%d/%Y}"
     elif filing_days is not None:
         params["fd"] = str(filing_days)
@@ -348,7 +366,14 @@ def buys_to_signals(buys: list[InsiderBuy]) -> list[Signal]:
             best_by_ticker[b.ticker] = b
 
     signals: list[Signal] = []
+    undated = 0
     for ticker, b in best_by_ticker.items():
+        # A signal without a real date can't be placed in time — dropping it is
+        # correct for backtesting (fabricating today() silently poisons returns).
+        signal_date = b.filing_date or b.trade_date
+        if signal_date is None:
+            undated += 1
+            continue
         cluster_count = clusters.get(ticker, 1)
         score = score_insider(
             title=b.title,
@@ -361,7 +386,7 @@ def buys_to_signals(buys: list[InsiderBuy]) -> list[Signal]:
             Signal(
                 source="insider",
                 ticker=ticker,
-                signal_date=b.filing_date or b.trade_date or date.today(),
+                signal_date=signal_date,
                 score=score,
                 detail={
                     "company": b.company,
@@ -371,6 +396,11 @@ def buys_to_signals(buys: list[InsiderBuy]) -> list[Signal]:
                     "cluster_count": cluster_count,
                 },
             )
+        )
+    if undated:
+        print(
+            f"  [warn] dropped {undated} ticker(s) with unparseable dates "
+            "(check OpenInsider date column parsing)."
         )
     return signals
 
