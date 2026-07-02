@@ -53,8 +53,18 @@ class PoliticianTrade:
 
 def _session() -> requests.Session:
     s = requests.Session()
+    # bff.capitoltrades.com sits behind Cloudflare and 503s bare API clients;
+    # browser-like headers (a real UA + Origin/Referer) get past the bot check.
     s.headers.update(
-        {"User-Agent": config.HTTP_USER_AGENT, "Accept": "application/json"}
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/125.0 Safari/537.36"
+            ),
+            "Accept": "application/json",
+            "Origin": "https://www.capitoltrades.com",
+            "Referer": "https://www.capitoltrades.com/",
+        }
     )
     return s
 
@@ -201,7 +211,23 @@ def scan(lookback_days: int = 30, verbose: bool = False) -> list[Signal]:
     return signals
 
 
+def _debug_raw() -> None:
+    """Print the raw Capitol Trades response for one query, to verify schema."""
+    import sys
+
+    params = {"txType": "buy", "page": 1, "pageSize": 10, "sortBy": "-txDate"}
+    print(f"GET {TRADES_URL}  params={params}")
+    resp = _session().get(TRADES_URL, params=params, timeout=config.HTTP_TIMEOUT)
+    print(f"HTTP {resp.status_code}  url={resp.url}")
+    print(resp.text[:2500])
+    sys.exit(0)
+
+
 if __name__ == "__main__":
+    import sys
+
+    if "--raw" in sys.argv:
+        _debug_raw()
     found = scan(lookback_days=30, verbose=True)
     print(f"\n{len(found)} politician signals (last 30 days):")
     for s in sorted(found, key=lambda x: x.score, reverse=True):

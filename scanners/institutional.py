@@ -183,7 +183,26 @@ def scan(lookback_days: int = 30, verbose: bool = False) -> list[Signal]:
     return signals
 
 
+def _debug_raw() -> None:
+    """Print the raw EDGAR response for one query, to verify the live schema."""
+    import sys
+
+    end = date.today()
+    start = end - timedelta(days=14)
+    params = {"forms": "SC 13D", "startdt": start.isoformat(), "enddt": end.isoformat(),
+              "from": 0, "size": 10}
+    print(f"GET {EFTS_URL}  params={params}")
+    resp = _session().get(EFTS_URL, params=params, timeout=config.HTTP_TIMEOUT)
+    print(f"HTTP {resp.status_code}  url={resp.url}")
+    print(resp.text[:2500])
+    sys.exit(0)
+
+
 if __name__ == "__main__":
+    import sys
+
+    if "--raw" in sys.argv:
+        _debug_raw()
     found = scan(lookback_days=14, verbose=True)
     print(f"\n{len(found)} institutional signals (last 14 days):")
     for s in sorted(found, key=lambda x: x.score, reverse=True):
