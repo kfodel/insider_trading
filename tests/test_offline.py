@@ -238,6 +238,35 @@ def test_dedup_buys():
     assert len(insider_buys.dedup_buys(buys + buys)) == len(buys)
 
 
+def test_coverage_by_group(monkeypatch):
+    # LIVE has data; DEAD is "delisted" (no series). Both score 2.
+    series = {"LIVE": _synthetic_series(100, 0.001), "SPY": _synthetic_series(400, 0.0002)}
+
+    def fake_closes(self, ticker):
+        s = series.get(ticker)
+        if s is None:
+            self.missing.add(ticker)
+        return s
+
+    monkeypatch.setattr(harness.PriceCache, "closes", fake_closes)
+
+    signals = [
+        Signal("insider", "LIVE", date(2022, 2, 1), 2, {}),
+        Signal("insider", "DEAD", date(2022, 2, 1), 2, {}),
+        Signal("insider", "GONE", date(2022, 2, 1), 3, {}),
+    ]
+    df = harness.forward_returns(signals, today=date(2024, 12, 31))
+    cov = harness.coverage_by_group(signals, df)
+
+    assert cov["overall"]["signals"] == 3
+    assert cov["overall"]["with_data"] == 1          # only LIVE
+    assert cov["by_score"][2]["signals"] == 2
+    assert cov["by_score"][2]["with_data"] == 1      # LIVE present, DEAD missing
+    assert cov["by_score"][2]["missing"] == 1
+    assert cov["by_score"][3]["missing"] == 1        # GONE missing
+    assert "survivorship" in harness.format_coverage(cov).lower()
+
+
 if __name__ == "__main__":
     import pytest
 

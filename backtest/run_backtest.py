@@ -18,7 +18,13 @@ from datetime import date, timedelta
 
 import config
 from scanners.insider_buys import buys_to_signals, dedup_buys, fetch_buys
-from backtest.harness import forward_returns, format_summary, summarize
+from backtest.harness import (
+    coverage_by_group,
+    format_coverage,
+    format_summary,
+    forward_returns,
+    summarize,
+)
 
 
 def _monthly_windows(start: date, end: date):
@@ -95,8 +101,10 @@ def main() -> int:
 
     df = forward_returns(signals, today=end)
     summary = summarize(df)
+    summary["coverage"] = coverage_by_group(signals, df)
 
     print(format_summary(summary))
+    print(format_coverage(summary["coverage"]))
 
     # Persist results.
     config.BACKTEST_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -108,6 +116,16 @@ def main() -> int:
     with open(json_path, "w") as fh:
         json.dump(summary, fh, indent=2, default=str)
     print(f"\nWrote {csv_path}\nWrote {json_path}")
+
+    # Dump the tickers with no price data so they can be classified
+    # (acquired at a premium vs bankrupt vs renamed) — the missing names decide
+    # which way the survivorship bias actually cuts.
+    covered = set(df["ticker"]) if not df.empty else set()
+    missing = sorted({s.ticker for s in signals} - covered)
+    if missing:
+        missing_path = config.BACKTEST_RESULTS_DIR / f"missing_tickers_{stamp}.txt"
+        missing_path.write_text("\n".join(missing) + "\n")
+        print(f"Wrote {missing_path} ({len(missing)} tickers with no price data)")
     return 0
 
 

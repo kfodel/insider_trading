@@ -200,6 +200,71 @@ def summarize(df: pd.DataFrame) -> dict:
     return result
 
 
+def coverage_by_group(signals: list[Signal], df: pd.DataFrame) -> dict:
+    """Per-tier / per-source price-data coverage — a survivorship-bias check.
+
+    Compares signals fed in vs signals that had usable price data (made it into
+    `df`). A group with a higher *missing* rate has more names that delisted or
+    vanished from yfinance. The direction of that bias is ambiguous: dropped
+    bankruptcies inflate the surviving returns, dropped premium acquisitions
+    deflate them. This just quantifies how much data is missing per group — the
+    missing names themselves need classifying before drawing conclusions.
+    """
+    from collections import Counter
+
+    def _entry(total: int, with_data: int) -> dict:
+        missing = total - with_data
+        return {
+            "signals": total,
+            "with_data": with_data,
+            "missing": missing,
+            "missing_pct": round(missing / total, 4) if total else 0.0,
+        }
+
+    total_scores = Counter(int(s.score) for s in signals)
+    total_sources = Counter(s.source for s in signals)
+    if df.empty:
+        wd_scores: Counter = Counter()
+        wd_sources: Counter = Counter()
+    else:
+        wd_scores = Counter(int(s) for s in df["score"].tolist())
+        wd_sources = Counter(df["source"].tolist())
+
+    return {
+        "overall": _entry(len(signals), 0 if df.empty else len(df)),
+        "by_score": {
+            sc: _entry(total_scores[sc], wd_scores.get(sc, 0))
+            for sc in sorted(total_scores)
+        },
+        "by_source": {
+            src: _entry(total_sources[src], wd_sources.get(src, 0))
+            for src in sorted(total_sources)
+        },
+    }
+
+
+def format_coverage(cov: dict) -> str:
+    """Human-readable rendering of coverage_by_group()."""
+    lines = ["\n=== DATA COVERAGE (survivorship check) ==="]
+    o = cov["overall"]
+    lines.append(
+        f"  overall: {o['with_data']}/{o['signals']} had price data "
+        f"({o['missing']} missing, {o['missing_pct']:.0%})"
+    )
+    for sc, e in cov["by_score"].items():
+        lines.append(
+            f"  score {sc}: {e['with_data']}/{e['signals']} had data "
+            f"({e['missing_pct']:.0%} missing)"
+        )
+    if any(e["missing_pct"] for e in cov["by_score"].values()):
+        lines.append(
+            "  note: missing names bias a group's returns, but direction is "
+            "ambiguous — dropped bankruptcies inflate, dropped buyouts deflate. "
+            "Classify the missing tickers before trusting the split."
+        )
+    return "\n".join(lines)
+
+
 def format_summary(summary: dict) -> str:
     """Human-readable text rendering of summarize()'s output."""
     lines: list[str] = []
