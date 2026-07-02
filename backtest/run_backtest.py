@@ -17,7 +17,7 @@ import json
 from datetime import date, timedelta
 
 import config
-from scanners.insider_buys import buys_to_signals, fetch_buys
+from scanners.insider_buys import buys_to_signals, dedup_buys, fetch_buys
 from backtest.harness import forward_returns, format_summary, summarize
 
 
@@ -46,9 +46,10 @@ def gather_historical_signals(start: date, end: date, min_value_usd: float, verb
         )
         all_buys.extend(buys)
         if verbose:
-            print(f"  -> {len(buys)} buys")
+            print(f"  -> {len(buys)} buys (>= ${min_value_usd:,.0f})")
+    all_buys = dedup_buys(all_buys)  # windows can overlap on filing/trade dates
     if verbose:
-        print(f"Total raw buys: {len(all_buys)}")
+        print(f"Total buys after dedup: {len(all_buys)}")
     return buys_to_signals(all_buys)
 
 
@@ -57,7 +58,13 @@ def main() -> int:
     p.add_argument("--years", type=int, default=5, help="Lookback in years (default 5).")
     p.add_argument("--start", type=str, help="Start date YYYY-MM-DD (overrides --years).")
     p.add_argument("--end", type=str, help="End date YYYY-MM-DD (default today).")
-    p.add_argument("--min-value", type=float, default=0.0, help="Min buy value in USD.")
+    p.add_argument(
+        "--min-value",
+        type=float,
+        default=500_000.0,
+        help="Min buy value in USD (default 500000 — high-conviction 'smart money' "
+        "buys only; use 0 for everything, 1000000 for $1M+).",
+    )
     p.add_argument("--quiet", action="store_true")
     args = p.parse_args()
 

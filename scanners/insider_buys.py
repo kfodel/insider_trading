@@ -189,8 +189,8 @@ def _screener_url(
         "o": "",            # insider name
         "pl": "", "ph": "",  # price low/high
         "ll": "", "lh": "",
-        "fd": "0",          # filing-date preset; 0 = use custom (fdr) when given
-        "fdr": "",
+        "fd": "",           # filing-date preset in days (blank when using fdr)
+        "fdr": "",          # filing-date custom range "MM/DD/YYYY - MM/DD/YYYY"
         "td": "0",
         "tdr": "",
         "fdlyl": "", "fdlyh": "",
@@ -226,20 +226,49 @@ def _screener_url(
 # --------------------------------------------------------------------------- #
 # Public fetchers
 # --------------------------------------------------------------------------- #
+def _row_key(b: InsiderBuy) -> tuple:
+    """Stable identity of a buy row, for de-duplication across pages/windows."""
+    return (b.ticker, b.insider, b.trade_date, b.filing_date, b.qty, b.value_usd)
+
+
+def dedup_buys(buys: Iterable[InsiderBuy]) -> list[InsiderBuy]:
+    """Drop duplicate rows (same identity), preserving first-seen order."""
+    seen: set[tuple] = set()
+    out: list[InsiderBuy] = []
+    for b in buys:
+        k = _row_key(b)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(b)
+    return out
+
+
 def fetch_buys(
     *,
     filing_days: Optional[int] = None,
     filing_range: Optional[tuple[date, date]] = None,
     min_value_usd: float = 0.0,
     min_insiders: int = 1,
-    max_pages: int = 50,
+    max_pages: int = 25,
     rows_per_page: int = 1000,
     session: Optional[requests.Session] = None,
     verbose: bool = False,
 ) -> list[InsiderBuy]:
-    """Fetch insider purchases, paginating until exhausted or `max_pages`."""
+    """Fetch insider purchases, paginating until exhausted or `max_pages`.
+
+    Pagination stops on any of: an empty page, a short page (fewer than
+    `rows_per_page`), or a page that contributes no *new* rows. That last guard
+    is what prevents runaway paging when OpenInsider ignores `&page=N` and keeps
+    returning the same rows.
+
+    `min_value_usd` is enforced client-side (guaranteed correct) in addition to
+    being hinted to the server via the `vl` param, so results never depend on
+    OpenInsider's filter-unit quirks.
+    """
     sess = session or _session()
     all_buys: list[InsiderBuy] = []
+    seen: set[tuple] = set()
 
     for page in range(1, max_pages + 1):
         url = _screener_url(
@@ -257,10 +286,24 @@ def fetch_buys(
         page_buys = _parse_screener_table(resp.text)
         if not page_buys:
             break
-        all_buys.extend(page_buys)
+
+        # Keep only rows we haven't seen (guards against repeated pages).
+        new_rows = [b for b in page_buys if _row_key(b) not in seen]
+        for b in new_rows:
+            seen.add(_row_key(b))
+        all_buys.extend(new_rows)
+
+        if not new_rows:
+            if verbose:
+                print("  [openinsider] page repeated earlier rows — stopping.")
+            break
         if len(page_buys) < rows_per_page:
-            break  # last page
+            break  # genuine last page
         time.sleep(config.REQUEST_DELAY)
+
+    # Client-side value floor: the source of truth for "large buys".
+    if min_value_usd > 0:
+        all_buys = [b for b in all_buys if (b.value_usd or 0) >= min_value_usd]
 
     return all_buys
 

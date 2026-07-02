@@ -45,10 +45,13 @@ python run_scan.py --dry-run --lookback 14
 # Run just the insider scanner directly:
 python -m scanners.insider_buys
 
-# Backtest insider buys over the last 5 years:
-python -m backtest.run_backtest --years 5
-# ...or an explicit window, with a value floor:
-python -m backtest.run_backtest --start 2019-01-01 --end 2024-01-01 --min-value 100000
+# Backtest insider buys over the last 5 years.
+# Defaults to $500k+ buys only (high-conviction "smart money") to keep the
+# result set small and fast. Raise for tighter, lower/zero for everything:
+python -m backtest.run_backtest --years 5                       # $500k+ (default)
+python -m backtest.run_backtest --years 5 --min-value 1000000   # $1M+ only
+python -m backtest.run_backtest --years 5 --min-value 0         # everything (slow)
+python -m backtest.run_backtest --start 2019-01-01 --end 2024-01-01
 ```
 
 Backtest output (summary stats per source and per score tier, plus the raw

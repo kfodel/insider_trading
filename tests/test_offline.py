@@ -170,6 +170,57 @@ def test_harness_forward_returns(monkeypatch):
     assert "OVERALL" in text
 
 
+# --------------------------------------------------------------------------- #
+# Pagination termination + value filter (offline, fake session)
+# --------------------------------------------------------------------------- #
+class _FakeResp:
+    def __init__(self, text):
+        self.text = text
+
+    def raise_for_status(self):
+        pass
+
+
+class _FakeSession:
+    """Returns the same fixture on every page — simulates OpenInsider ignoring
+    &page=N. fetch_buys must detect the repeat and stop, not loop to max_pages."""
+
+    def __init__(self, html):
+        self.html = html
+        self.calls = 0
+
+    def get(self, url, timeout=None):
+        self.calls += 1
+        return _FakeResp(self.html)
+
+
+def test_fetch_buys_stops_on_repeated_pages():
+    html = FIXTURE.read_text()
+    sess = _FakeSession(html)
+    buys = insider_buys.fetch_buys(
+        filing_days=30, rows_per_page=5, max_pages=25, session=sess
+    )
+    # Page 1 yields 5 rows; page 2 repeats them -> zero new -> stop after 2 gets.
+    assert sess.calls == 2
+    assert len(buys) == 5  # not 5 * 25
+
+
+def test_fetch_buys_value_floor():
+    html = FIXTURE.read_text()
+    sess = _FakeSession(html)
+    buys = insider_buys.fetch_buys(
+        filing_days=30, min_value_usd=500_000, rows_per_page=5, session=sess
+    )
+    # Only ACME CEO ($500k) and BIGV ($1M) clear a $500k floor.
+    tickers = sorted(b.ticker for b in buys)
+    assert tickers == ["ACME", "BIGV"]
+
+
+def test_dedup_buys():
+    buys = insider_buys._parse_screener_table(FIXTURE.read_text())
+    assert len(insider_buys.dedup_buys(buys + buys)) == len(buys)
+
+
 if __name__ == "__main__":
     import pytest
 
